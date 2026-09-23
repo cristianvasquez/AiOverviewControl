@@ -42,8 +42,16 @@ if [ "$1" = "app-server" ]; then
     id="$(printf '%s' "$line" | jq -r '.id // empty')"
     case "$id" in
       0) printf '{"id":0,"result":{}}\n';;
-      1) printf '{"id":1,"result":{"account":{"email":"t@example.com","planType":"plus"}}}\n';;
-      2) printf '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":10,"windowDurationMins":300,"resetsAt":1790000000},"secondary":{"usedPercent":5,"windowDurationMins":10080,"resetsAt":1790000000}},"planType":"plus"}}\n';;
+      1) if [ "${CODEX_STUB_PROXY_NO_ACCOUNT:-0}" = "1" ] && [ "$2" = "proxy" ]; then
+           printf '{"id":1,"result":{"account":null}}\n'
+         else
+           printf '{"id":1,"result":{"account":{"email":"t@example.com","planType":"plus"}}}\n'
+         fi;;
+      2) if [ "${CODEX_STUB_PROXY_NO_ACCOUNT:-0}" = "1" ] && [ "$2" = "proxy" ]; then
+           printf '{"id":2,"error":{"code":-32600,"message":"not logged in"}}\n'
+         else
+           printf '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":10,"windowDurationMins":300,"resetsAt":1790000000},"secondary":{"usedPercent":5,"windowDurationMins":10080,"resetsAt":1790000000}},"planType":"plus"}}\n'
+         fi;;
     esac
   done
   exit 0
@@ -103,5 +111,16 @@ out="$(CODEX_APP_SERVER_MODE=spawn run_adapter)"
 grep -q 'daemon start' "$STUB_LOG" && fail "spawn mode probed the daemon"
 grep -q '^app-server$' "$STUB_LOG" || fail "spawn mode did not spawn"
 [ "$(jq -r '.usage.primary.usedPercent' <<<"$out")" = "10" ] || fail "spawn mode usage invalid"
+
+# 6. Stale daemon: the proxy reports no account (login done after the daemon
+#    started). The adapter retries with a direct spawn, returns valid usage,
+#    and restarts the daemon.
+rm -f "$STUB_LOG" "$XDG_CACHE_HOME/AiOverviewControl/codex-usage.json"
+out="$(CODEX_STUB_PROXY_NO_ACCOUNT=1 run_adapter)"
+grep -q '^app-server proxy$' "$STUB_LOG" || fail "stale daemon: proxy not tried first"
+grep -q '^app-server$' "$STUB_LOG" || fail "stale daemon: no spawn fallback"
+[ "$(jq -r '.usage.primary.usedPercent' <<<"$out")" = "10" ] || fail "stale daemon: usage invalid"
+for _ in 1 2 3 4 5 6 7 8 9 10; do grep -q 'daemon restart' "$STUB_LOG" && break; sleep 0.1; done
+grep -q '^app-server daemon restart$' "$STUB_LOG" || fail "stale daemon: daemon not restarted"
 
 echo "OK: codex usage backend-launch discipline"

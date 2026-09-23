@@ -155,11 +155,16 @@ if [ "${CODEX_APP_SERVER_MODE:-auto}" != "spawn" ]; then
   fi
 fi
 
+daemon_suspect=0
+account="null"
 for attempt in 1 2; do
-  # A proxy that reached nothing is retried against a direct spawn instead of
-  # a second doomed proxy connection.
-  if [ "$attempt" -eq 2 ] && [ "$backend_mode" = "proxy" ] && [ ! -s "$tmp_out" ]; then
+  # A proxy that reached nothing, or a daemon that reports no account, is
+  # retried against a direct spawn. The daemon keeps the credentials it
+  # started with, so it does not see a `codex login` done after its start.
+  if [ "$attempt" -eq 2 ] && [ "$backend_mode" = "proxy" ] \
+      && { [ ! -s "$tmp_out" ] || [ "$account" = "null" ]; }; then
     backend_mode="spawn"
+    daemon_suspect=1
   fi
 
   if [ "$backend_mode" = "proxy" ]; then
@@ -176,12 +181,18 @@ for attempt in 1 2; do
     break
   fi
 
-  if [ "$attempt" -eq 2 ] || [ "$account" = "null" ]; then
+  if [ "$attempt" -eq 2 ] || { [ "$account" = "null" ] && [ "$backend_mode" = "spawn" ]; }; then
     break
   fi
 
   sleep 1
 done
+
+# A direct spawn found an account the daemon did not: the daemon has stale
+# credentials. Restart it in the background so later polls use the proxy again.
+if [ "$daemon_suspect" -eq 1 ] && [ "$account" != "null" ]; then
+  (timeout 20 codex app-server daemon restart >/dev/null 2>&1 </dev/null &)
+fi
 
 if [ "$limits" = "null" ] || ! printf '%s' "$limits" | jq -e '.rateLimits' >/dev/null 2>&1; then
   if [ "$account" = "null" ]; then
