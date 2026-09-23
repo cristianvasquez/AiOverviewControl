@@ -2633,14 +2633,6 @@ PluginComponent {
                         }
 
                         StyledText {
-                            text: root.providerName(pillEntry.modelData.provider)
-                            color: Theme.surfaceText
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.weight: Font.DemiBold
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-
-                        StyledText {
                             text: `${Math.round(root.pillPercentFor(pillEntry.modelData))}%`
                             color: pillEntry.usageColor
                             font.pixelSize: Theme.fontSizeSmall
