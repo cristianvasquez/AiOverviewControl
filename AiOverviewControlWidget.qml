@@ -39,6 +39,16 @@ PluginComponent {
     property string providerStatusFilter: "all"
     property string focusedProviderId: ""
     property bool allExpanded: false
+    // Provider shown in the popout detail tab; falls back to the first provider.
+    property string activeTabProviderId: ""
+    readonly property int activeTabIndex: {
+        const list = filteredDisplayProviders;
+        for (let i = 0; i < list.length; i++) {
+            if (list[i].provider === activeTabProviderId) return i;
+        }
+        return list.length > 0 ? 0 : -1;
+    }
+    readonly property var activeTabProvider: activeTabIndex >= 0 ? filteredDisplayProviders[activeTabIndex] : null
     property var usageHistory: ({})
     property string historyBuffer: ""
     property string retryBuffer: ""
@@ -1998,6 +2008,7 @@ PluginComponent {
             return;
         }
         root.focusedProviderId = id;
+        root.activeTabProviderId = id;
         root.providerStatusFilter = "all";
         root.providerFilter = "";
         root.pendingScrollProviderId = id;
@@ -2947,7 +2958,8 @@ PluginComponent {
     component ProviderDashboardCard: StyledRect {
         id: card
         required property var provider
-        property bool expanded: root.allExpanded || (!!provider && provider.provider === root.focusedProviderId)
+        property bool forceExpanded: false
+        property bool expanded: forceExpanded || root.allExpanded || (!!provider && provider.provider === root.focusedProviderId)
         property bool hasUsage: !!provider && !!provider.usage && !provider.error
         property color accentColor: provider && provider.error ? Theme.error : root.providerAccent(provider ? provider.provider : "")
         property var windows: root.windowsForProvider(provider)
@@ -2962,6 +2974,7 @@ PluginComponent {
         }
 
         function toggleExpanded() {
+            if (card.forceExpanded) return;
             if (root.allExpanded) {
                 root.allExpanded = false;
                 root.focusedProviderId = card.provider.provider;
@@ -4601,8 +4614,8 @@ PluginComponent {
         }
     }
 
-    popoutWidth: densityMode === "compact" ? 800 : 860
-    popoutHeight: 820
+    popoutWidth: densityMode === "compact" ? 560 : 620
+    popoutHeight: 640
 
     popoutContent: Component {
         PopoutComponent {
@@ -4732,461 +4745,93 @@ PluginComponent {
                             }
                         }
 
-                        StyledRect {
+                        // One-glance summary: usage windows of all providers, side by side.
+                        GridLayout {
+                            id: summaryGrid
+                            visible: root.filteredDisplayProviders.length > 0
                             width: parent.width
-                            radius: Theme.cornerRadius + 8
-                            color: Theme.surfaceContainerHigh
-                            border.width: 1
-                            border.color: Theme.withAlpha(root.heroAccent, 0.38)
-                            implicitHeight: overviewCol.implicitHeight + (contentColumn.width < 560 ? Theme.spacingL : Theme.spacingXL) * 2
-                            clip: true
+                            columns: width < 420 ? 1 : Math.max(1, Math.min(root.filteredDisplayProviders.length, 3))
+                            columnSpacing: Theme.spacingM
+                            rowSpacing: Theme.spacingM
 
-                            Rectangle {
-                                anchors.fill: parent
-                                radius: parent.radius
-                                gradient: Gradient {
-                                    GradientStop { position: 0.0; color: Theme.withAlpha(root.heroAccent, 0.18) }
-                                    GradientStop { position: 0.52; color: Theme.withAlpha(root.heroAccent, 0.055) }
-                                    GradientStop { position: 1.0; color: Theme.withAlpha(Theme.surfaceContainer, 0.02) }
-                                }
-                            }
+                            Repeater {
+                                model: root.filteredDisplayProviders
 
-                            Column {
-                                id: overviewCol
-                                anchors.fill: parent
-                                anchors.margins: contentColumn.width < 560 ? Theme.spacingL : Theme.spacingXL
-                                spacing: Theme.spacingL
+                                StyledRect {
+                                    id: summaryTile
+                                    required property var modelData
+                                    required property int index
+                                    readonly property bool selected: root.activeTabIndex === index
+                                    readonly property color accent: modelData.error ? Theme.error : root.providerAccent(modelData.provider)
 
-                                RowLayout {
-                                    width: parent.width
-                                    spacing: Theme.spacingM
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 1
+                                    Layout.alignment: Qt.AlignTop
+                                    implicitHeight: summaryCol.implicitHeight + Theme.spacingM * 2
+                                    radius: Theme.cornerRadius + 4
+                                    color: Theme.surfaceContainerHigh
+                                    border.width: 1
+                                    border.color: Theme.withAlpha(accent, selected ? 0.5 : 0.12)
 
                                     Column {
-                                        Layout.fillWidth: true
-                                        Layout.alignment: Qt.AlignVCenter
+                                        id: summaryCol
+                                        anchors.left: parent.left
+                                        anchors.right: parent.right
+                                        anchors.top: parent.top
+                                        anchors.margins: Theme.spacingM
                                         spacing: Theme.spacingS
 
-                                        Row {
-                                            spacing: Theme.spacingXS
-
-                                            Rectangle {
-                                                width: 8
-                                                height: 8
-                                                radius: 4
-                                                anchors.verticalCenter: parent.verticalCenter
-                                                color: root.hasError ? Theme.warning : (root.hasProviderData ? Theme.success : Theme.surfaceVariantText)
-
-                                                SequentialAnimation on opacity {
-                                                    running: root.isLoading
-                                                    loops: Animation.Infinite
-                                                    NumberAnimation { from: 1; to: 0.3; duration: 620; easing.type: Easing.InOutQuad }
-                                                    NumberAnimation { from: 0.3; to: 1; duration: 620; easing.type: Easing.InOutQuad }
-                                                }
-                                            }
-
-                                            StyledText {
-                                                text: root.statusTitle.toUpperCase()
-                                                color: Theme.surfaceVariantText
-                                                font.pixelSize: Theme.fontSizeSmall - 2
-                                                font.weight: Font.DemiBold
-                                                font.letterSpacing: 1.2
-                                                anchors.verticalCenter: parent.verticalCenter
-                                            }
-                                        }
-
                                         StyledText {
                                             width: parent.width
-                                            text: root.providerData ? root.providerName(root.providerData.provider) : t("app.title", "AI Usage Control")
+                                            text: root.providerName(summaryTile.modelData.provider)
                                             color: Theme.surfaceText
-                                            font.pixelSize: contentColumn.width < 560 ? Theme.fontSizeLarge + 2 : Theme.fontSizeLarge + 6
+                                            font.pixelSize: Theme.fontSizeMedium
                                             font.weight: Font.Bold
-                                            wrapMode: Text.WordWrap
+                                            elide: Text.ElideRight
                                         }
 
                                         StyledText {
+                                            visible: !!summaryTile.modelData.error
                                             width: parent.width
-                                            text: root.statusSubtitle
-                                            color: Theme.surfaceVariantText
-                                            font.pixelSize: Theme.fontSizeMedium
+                                            text: root.providerErrorText(summaryTile.modelData)
+                                            color: Theme.error
+                                            font.pixelSize: Theme.fontSizeSmall
                                             wrapMode: Text.WordWrap
                                             maximumLineCount: 2
                                             elide: Text.ElideRight
                                         }
 
-                                        Flow {
-                                            width: parent.width
-                                            spacing: Theme.spacingXS
+                                        Repeater {
+                                            model: root.windowsForProvider(summaryTile.modelData)
 
-                                            BadgePill {
-                                                label: root.providerData ? root.providerSourceLabel(root.providerData) : t("status.local_helpers", "local adapters")
-                                                iconName: "sync_alt"
-                                                accentColor: Theme.primary
-                                            }
-
-                                            BadgePill {
-                                                visible: !!root.providerData && !root.isPlainProvider(root.providerData.provider)
-                                                label: root.providerKindsLabel(root.providerData.provider)
-                                                iconName: root.providerKindIconFor(root.providerData.provider)
-                                                accentColor: root.providerKindAccentFor(root.providerData.provider)
-                                            }
-
-                                            BadgePill {
-                                                label: root.hasError && !root.hasProviderData
-                                                    ? t("status.setup_required", "Setup required")
-                                                    : root.hasError
-                                                        ? t("status.needs_attention", "Needs attention")
-                                                        : root.providerStatusLabel(root.providerData)
-                                                iconName: root.hasError ? "warning" : "check_circle"
-                                                accentColor: root.hasError ? Theme.warning : root.getUsageColor(root.primaryPercent)
-                                            }
-
-                                            BadgePill {
-                                                visible: root.isDataStale
-                                                label: t("status.stale", "Stale")
-                                                iconName: "schedule"
-                                                accentColor: Theme.warning
-                                                emphasized: true
+                                            UsageBar {
+                                                required property var modelData
+                                                width: summaryCol.width
+                                                label: modelData.label
+                                                percent: Number(modelData.data.usedPercent || 0)
+                                                aside: root.formatUsageLine(modelData.data)
                                             }
                                         }
                                     }
 
-                                    // Window bars double as a jump link to the focused provider's card.
-                                    Item {
-                                        visible: contentColumn.width >= 480 && root.hasProviderData && root.windowsForProvider(root.providerData).length > 0
-                                        Layout.alignment: Qt.AlignVCenter
-                                        Layout.preferredWidth: Math.min(260, contentColumn.width * 0.44)
-                                        implicitHeight: heroBarsCol.implicitHeight
-
-                                        Column {
-                                            id: heroBarsCol
-                                            width: parent.width
-                                            spacing: Theme.spacingM
-                                            opacity: heroBarsJump.containsMouse ? 0.82 : 1
-                                            Behavior on opacity { NumberAnimation { duration: 120 } }
-
-                                            Repeater {
-                                                model: root.windowsForProvider(root.providerData)
-
-                                                UsageBar {
-                                                    required property var modelData
-                                                    width: parent.width
-                                                    label: modelData.label
-                                                    percent: Number(modelData.data.usedPercent || 0)
-                                                    aside: root.formatUsageLine(modelData.data)
-                                                    accentColor: root.getUsageColor(Number(modelData.data.usedPercent || 0))
-                                                }
-                                            }
-                                        }
-
-                                        MouseArea {
-                                            id: heroBarsJump
-                                            anchors.fill: parent
-                                            hoverEnabled: true
-                                            cursorShape: Qt.PointingHandCursor
-                                            onClicked: root.focusProvider(root.providerData ? root.providerData.provider : "")
-                                        }
-                                    }
-
-                                    // Guided hint that fills the window-bar slot when there is no
-                                    // focused provider — covers loading, all-providers-errored, and
-                                    // no-data-yet so the hero never reads as a blank panel.
-                                    Row {
-                                        visible: contentColumn.width >= 480 && !root.hasProviderData
-                                        Layout.alignment: Qt.AlignVCenter
-                                        Layout.preferredWidth: Math.min(260, contentColumn.width * 0.44)
-                                        spacing: Theme.spacingS
-
-                                        readonly property color hintAccent: root.isLoading
-                                            ? Theme.primary
-                                            : (root.errorProviders.length > 0 ? Theme.warning : root.heroAccent)
-
-                                        Rectangle {
-                                            width: 34
-                                            height: 34
-                                            radius: 11
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            color: Theme.withAlpha(parent.hintAccent, 0.14)
-                                            border.width: 1
-                                            border.color: Theme.withAlpha(parent.hintAccent, 0.28)
-
-                                            DankIcon {
-                                                anchors.centerIn: parent
-                                                name: root.isLoading
-                                                    ? "hourglass_top"
-                                                    : (root.errorProviders.length > 0 ? "warning" : "monitoring")
-                                                size: 17
-                                                color: parent.parent.hintAccent
-                                            }
-                                        }
-
-                                        Column {
-                                            width: parent.width - 34 - Theme.spacingS
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            spacing: 2
-
-                                            StyledText {
-                                                width: parent.width
-                                                text: root.isLoading
-                                                    ? t("status.syncing", "Syncing usage")
-                                                    : (root.errorProviders.length > 0
-                                                        ? t("hero.error_title", "All providers need attention")
-                                                        : t("hero.empty_title", "No usage data yet"))
-                                                color: Theme.surfaceText
-                                                font.pixelSize: Theme.fontSizeMedium
-                                                font.weight: Font.Bold
-                                                wrapMode: Text.WordWrap
-                                            }
-
-                                            StyledText {
-                                                width: parent.width
-                                                text: root.isLoading
-                                                    ? t("status.loading_usage", "Fetching provider usage data...")
-                                                    : (root.errorProviders.length > 0
-                                                        ? t("hero.error_body", "Check credentials and that the provider CLIs are installed.")
-                                                        : t("status.no_data_hint", "Run your configured AI CLIs and refresh to populate usage windows."))
-                                                color: Theme.surfaceVariantText
-                                                font.pixelSize: Theme.fontSizeSmall
-                                                wrapMode: Text.WordWrap
-                                                maximumLineCount: 3
-                                                elide: Text.ElideRight
-                                            }
-                                        }
-                                    }
-                                }
-
-                                StyledRect {
-                                    width: parent.width
-                                    visible: root.fleetRollup.count >= 2
-                                    radius: Theme.cornerRadius
-                                    color: Theme.withAlpha(Theme.surfaceText, 0.04)
-                                    border.width: 1
-                                    border.color: Theme.withAlpha(Theme.surfaceText, 0.08)
-                                    implicitHeight: fleetCol.implicitHeight + Theme.spacingM * 2
-
-                                    Column {
-                                        id: fleetCol
+                                    MouseArea {
                                         anchors.fill: parent
-                                        anchors.margins: Theme.spacingM
-                                        spacing: Theme.spacingM
-
-                                        RowLayout {
-                                            width: parent.width
-                                            spacing: Theme.spacingS
-
-                                            DankIcon {
-                                                Layout.alignment: Qt.AlignVCenter
-                                                name: "dashboard"
-                                                size: 15
-                                                color: Theme.surfaceVariantText
-                                            }
-
-                                            StyledText {
-                                                Layout.alignment: Qt.AlignVCenter
-                                                text: t("rollup.title", "Fleet overview").toUpperCase()
-                                                color: Theme.surfaceVariantText
-                                                font.pixelSize: Theme.fontSizeSmall - 2
-                                                font.weight: Font.DemiBold
-                                                font.letterSpacing: 1.0
-                                            }
-
-                                            Item { Layout.fillWidth: true }
-
-                                            BadgePill {
-                                                Layout.alignment: Qt.AlignVCenter
-                                                label: t("rollup.providers", "{count} live", { count: root.fleetRollup.count })
-                                                iconName: "lan"
-                                                accentColor: Theme.primary
-                                            }
-                                        }
-
-                                        Flow {
-                                            width: parent.width
-                                            spacing: Theme.spacingXL
-
-                                            Row {
-                                                spacing: Theme.spacingS
-
-                                                Item {
-                                                    width: 40
-                                                    height: 40
-                                                    anchors.verticalCenter: parent.verticalCenter
-
-                                                    ProgressRing {
-                                                        anchors.fill: parent
-                                                        percent: root.fleetRollup.avg
-                                                        thickness: 5
-                                                        accentColor: root.getUsageColor(root.fleetRollup.avg)
-                                                    }
-
-                                                    StyledText {
-                                                        anchors.centerIn: parent
-                                                        text: `${Math.round(root.fleetRollup.avg)}%`
-                                                        color: Theme.surfaceText
-                                                        font.pixelSize: Theme.fontSizeSmall - 1
-                                                        font.weight: Font.Bold
-                                                    }
-                                                }
-
-                                                Column {
-                                                    anchors.verticalCenter: parent.verticalCenter
-                                                    spacing: 1
-
-                                                    StyledText {
-                                                        text: t("rollup.avg_load", "Avg load")
-                                                        color: Theme.surfaceText
-                                                        font.pixelSize: Theme.fontSizeMedium
-                                                        font.weight: Font.Bold
-                                                    }
-
-                                                    StyledText {
-                                                        text: t("rollup.across", "across {count}", { count: root.fleetRollup.count })
-                                                        color: Theme.surfaceVariantText
-                                                        font.pixelSize: Theme.fontSizeSmall - 1
-                                                    }
-                                                }
-                                            }
-
-                                            // Peak provider is a jump link: click to expand + scroll to its card.
-                                            MouseArea {
-                                                id: peakJump
-                                                implicitWidth: peakStat.implicitWidth
-                                                implicitHeight: peakStat.implicitHeight
-                                                enabled: root.fleetRollup.peakId.length > 0
-                                                hoverEnabled: enabled
-                                                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                                onClicked: root.focusProvider(root.fleetRollup.peakId)
-
-                                                HeroStat {
-                                                    id: peakStat
-                                                    opacity: peakJump.containsMouse ? 0.78 : 1
-                                                    statIcon: "local_fire_department"
-                                                    statLabel: root.fleetRollup.peakName.length > 0 ? root.fleetRollup.peakName : t("rollup.peak", "Peak")
-                                                    statValue: `${Math.round(root.fleetRollup.peak)}%`
-                                                    statAccent: root.getUsageColor(root.fleetRollup.peak)
-                                                    Behavior on opacity { NumberAnimation { duration: 120 } }
-                                                }
-                                            }
-
-                                            HeroStat {
-                                                statIcon: "warning"
-                                                statLabel: t("rollup.at_risk", "At risk")
-                                                statValue: String(root.fleetRollup.atRisk)
-                                                statAccent: root.fleetRollup.atRisk > 0 ? Theme.error : Theme.success
-                                            }
-
-                                            HeroStat {
-                                                visible: root.fleetRollup.nextResetMs > 0
-                                                statIcon: "schedule"
-                                                statLabel: t("rollup.next_reset", "Next reset")
-                                                statValue: root.fleetNextResetLabel
-                                                statAccent: root.heroAccent
-                                            }
-                                        }
-                                    }
-                                }
-
-                                Rectangle {
-                                    width: parent.width
-                                    height: 1
-                                    color: Theme.withAlpha(Theme.surfaceText, 0.07)
-                                }
-
-                                Flow {
-                                    width: parent.width
-                                    spacing: Theme.spacingXL
-
-                                    HeroStat {
-                                        statIcon: "check_circle"
-                                        statLabel: t("card.active", "Active")
-                                        statValue: String(root.successfulProviders.length)
-                                        statAccent: Theme.success
-                                    }
-
-                                    HeroStat {
-                                        statIcon: "warning"
-                                        statLabel: t("card.attention", "Attention")
-                                        statValue: String(root.errorProviders.length)
-                                        statAccent: root.errorProviders.length > 0 ? Theme.warning : Theme.success
-                                    }
-
-                                    HeroStat {
-                                        visible: !!(root.primaryWindow && root.primaryWindow.resetsAt)
-                                        statIcon: "schedule"
-                                        statLabel: t("card.resets_in", "Resets in")
-                                        statValue: root.primaryWindow ? root.formatTimeUntil(root.primaryWindow.resetsAt) : "—"
-                                        statAccent: root.heroAccent
-                                    }
-
-                                    HeroStat {
-                                        statIcon: "history"
-                                        statLabel: t("popout.last_sync", "Last sync")
-                                        statValue: root.lastUpdated.length > 0 ? root.lastUpdated : "—"
-                                        statAccent: root.isDataStale ? Theme.warning : Theme.primary
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: root.activeTabProviderId = summaryTile.modelData.provider
                                     }
                                 }
                             }
                         }
 
-                        Column {
-                            visible: root.providers.length > 0
+                        DankTabBar {
+                            visible: root.filteredDisplayProviders.length > 1
                             width: parent.width
+                            tabHeight: 40
+                            showIcons: false
                             spacing: Theme.spacingS
-
-                            RowLayout {
-                                width: parent.width
-                                spacing: Theme.spacingM
-
-                                StyledText {
-                                    Layout.fillWidth: true
-                                    text: t("card.providers", "Providers")
-                                    color: Theme.surfaceText
-                                    font.pixelSize: Theme.fontSizeLarge
-                                    font.weight: Font.Bold
-                                }
-
-                                Rectangle {
-                                    Layout.alignment: Qt.AlignVCenter
-                                    implicitWidth: providerCountLabel.implicitWidth + Theme.spacingM * 2
-                                    implicitHeight: 28
-                                    radius: 14
-                                    color: Theme.withAlpha(root.heroAccent, 0.12)
-                                    border.width: 1
-                                    border.color: Theme.withAlpha(root.heroAccent, 0.24)
-
-                                    StyledText {
-                                        id: providerCountLabel
-                                        anchors.centerIn: parent
-                                        text: root.filteredDisplayProviders.length === 1 ? t("status.displayed", "{count} displayed", { count: root.filteredDisplayProviders.length }) : t("status.displayed_plural", "{count} displayed", { count: root.filteredDisplayProviders.length })
-                                        color: root.heroAccent
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        font.weight: Font.DemiBold
-                                    }
-                                }
-
-                                DankActionButton {
-                                    Layout.alignment: Qt.AlignVCenter
-                                    iconName: root.allExpanded ? "unfold_less" : "unfold_more"
-                                    iconColor: root.allExpanded ? Theme.primary : Theme.surfaceVariantText
-                                    backgroundColor: Theme.withAlpha(Theme.primary, root.allExpanded ? 0.12 : 0.06)
-                                    buttonSize: 30
-                                    tooltipText: root.allExpanded ? t("card.collapse_all", "Collapse all") : t("card.expand_all", "Expand all")
-                                    onClicked: {
-                                        root.allExpanded = !root.allExpanded;
-                                        if (root.allExpanded) root.focusedProviderId = "";
-                                    }
-                                }
-                            }
-
-                            DankFilterChips {
-                                width: parent.width
-                                showCounts: true
-                                model: [
-                                    { label: t("filter.all", "All"), count: root.displayProviders.length },
-                                    { label: t("filter.live", "Live"), count: root.successfulProviders.length },
-                                    { label: t("filter.issues", "Issues"), count: root.errorProviders.length }
-                                ]
-                                onSelectionChanged: index => root.providerStatusFilter = index === 1 ? "live" : (index === 2 ? "issues" : "all")
-                            }
+                            model: root.filteredDisplayProviders.map(p => ({ text: root.providerName(p.provider) }))
+                            currentIndex: root.activeTabIndex
+                            onTabClicked: index => root.activeTabProviderId = root.filteredDisplayProviders[index].provider
                         }
 
                         StyledText {
@@ -5277,25 +4922,15 @@ PluginComponent {
                             }
                         }
 
-                        ProviderManager {
+                        // Details of the provider selected in the tab bar.
+                        Loader {
                             width: parent.width
-                        }
-
-                        DankTextField {
-                            visible: root.displayProviders.length > 5
-                            width: parent.width
-                            placeholderText: t("card.filter_providers", "Filter providers by name or source")
-                            text: root.providerFilter
-                            onTextChanged: root.providerFilter = text
-                        }
-
-                        Repeater {
-                            id: providerCardsRepeater
-                            model: root.filteredDisplayProviders
-
-                            ProviderDashboardCard {
-                                required property var modelData
-                                provider: modelData
+                            active: !!root.activeTabProvider
+                            sourceComponent: Component {
+                                ProviderDashboardCard {
+                                    provider: root.activeTabProvider
+                                    forceExpanded: true
+                                }
                             }
                         }
                     }
