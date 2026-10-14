@@ -93,7 +93,9 @@ refresh_pricing() {
     # Validate that we got at least one model with pricing
     local check
     check=$(echo "$result" | jq -r '.models | to_entries | length' 2>/dev/null) || return 1
-    [ "$check" -gt 0 ] 2>/dev/null && echo "$result" > "$PRICING_CACHE" && return 0
+    [ "$check" -gt 0 ] 2>/dev/null && echo "$result" > "${PRICING_CACHE}.$$.tmp" \
+        && mv -f "${PRICING_CACHE}.$$.tmp" "$PRICING_CACHE" && return 0
+    rm -f "${PRICING_CACHE}.$$.tmp"
     return 1
 }
 
@@ -124,6 +126,11 @@ if [ -f "$CREDENTIALS" ]; then
 
     # Check if cached usage data is still fresh
     USE_CACHE=false
+    # A cache that does not parse as one JSON document (e.g. torn by two
+    # concurrent runs) breaks every read below; drop it.
+    if [ -f "$USAGE_CACHE" ] && ! jq -e 'type == "object"' "$USAGE_CACHE" >/dev/null 2>&1; then
+        rm -f "$USAGE_CACHE"
+    fi
     if [ -f "$USAGE_CACHE" ]; then
         cache_ts=$(jq -r '.cached_at // 0' "$USAGE_CACHE" 2>/dev/null || echo 0)
         now_ts=$(date +%s)
@@ -151,7 +158,10 @@ if [ -f "$CREDENTIALS" ]; then
             if [ "$usage_status" = "200" ] \
                 && jq -e '.five_hour | type == "object"' "$usage_body" >/dev/null 2>&1; then
                 API_RESPONSE=$(cat "$usage_body")
-                jq -n --argjson data "$API_RESPONSE" '{cached_at: (now | floor), data: $data}' > "$USAGE_CACHE" 2>/dev/null
+                # Atomic replace: concurrent widget instances run this adapter in parallel.
+                usage_tmp="${USAGE_CACHE}.$$.tmp"
+                jq -n --argjson data "$API_RESPONSE" '{cached_at: (now | floor), data: $data}' > "$usage_tmp" 2>/dev/null \
+                    && mv -f "$usage_tmp" "$USAGE_CACHE" || rm -f "$usage_tmp"
             elif [ "$usage_status" = "401" ] || [ "$usage_status" = "403" ]; then
                 # Credentials are genuinely invalid — stale data would mislead.
                 USAGE_ERROR_KIND="authentication"
